@@ -31,41 +31,85 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "8512545163:AAFs8-3E4-1KA8yjQ8j_jVx-DwMv
 # Настройки канала (ЗАМЕНИ НА СВОЙ КАНАЛ)
 CHANNEL_USERNAME = "@pocoyoipa"  # Замени на username своего канала
 
-# Путь к картинкам, которые ты загрузил(а)
+# Путь к картинкам
 IMAGE_PATHS = [
     "IMG_6482.png",
     "IMG_6483.png",
     "IMG_6489.png",
 ]
 
-# В памяти - хранение выданных "учёток"
-# dict: message_id -> {email, password, expires_at, revoked, chat_id}
-SESSIONS = {}
+# База данных аккаунтов
+ACCOUNTS_DATABASE = {
+    "AyuGram": [
+        {"email": "ayugram_user1@demo.com", "password": "AyU123!pass", "available": True},
+        {"email": "ayugram_user2@demo.com", "password": "AyU456!pass", "available": True},
+        {"email": "ayugram_user3@demo.com", "password": "AyU789!pass", "available": True},
+    ],
+    "OnionGram": [
+        {"email": "onion_user1@demo.com", "password": "OnI123!pass", "available": True},
+        {"email": "onion_user2@demo.com", "password": "OnI456!pass", "available": True},
+        {"email": "onion_user3@demo.com", "password": "OnI789!pass", "available": True},
+    ],
+    "DarkGram": [
+        {"email": "dark_user1@demo.com", "password": "DrK123!pass", "available": True},
+        {"email": "dark_user2@demo.com", "password": "DrK456!pass", "available": True},
+        {"email": "dark_user3@demo.com", "password": "DrK789!pass", "available": True},
+    ],
+    "TikTok BH": [
+        {"email": "tiktok_user1@demo.com", "password": "TkK123!pass", "available": True},
+        {"email": "tiktok_user2@demo.com", "password": "TkK456!pass", "available": True},
+        {"email": "tiktok_user3@demo.com", "password": "TkK789!pass", "available": True},
+    ],
+    "DoxGram": [
+        {"email": "dox_user1@demo.com", "password": "DxG123!pass", "available": True},
+        {"email": "dox_user2@demo.com", "password": "DxG456!pass", "available": True},
+        {"email": "dox_user3@demo.com", "password": "DxG789!pass", "available": True},
+    ],
+    "Minecraft": [
+        {"email": "minecraft_user1@demo.com", "password": "McR123!pass", "available": True},
+        {"email": "minecraft_user2@demo.com", "password": "McR456!pass", "available": True},
+        {"email": "minecraft_user3@demo.com", "password": "McR789!pass", "available": True},
+    ],
+    "Прочий мод": [
+        {"email": "mod_user1@demo.com", "password": "MdM123!pass", "available": True},
+        {"email": "mod_user2@demo.com", "password": "MdM456!pass", "available": True},
+        {"email": "mod_user3@demo.com", "password": "MdM789!pass", "available": True},
+    ]
+}
 
-# Список моделей (как в скриншоте)
+# Список моделей iPhone
 MODEL_ROWS = [
     ["13", "13 Pro", "13 Pro Max"],
     ["14", "14 Pro", "14 Pro Max"],
     ["15", "15 Pro", "15 Pro Max"],
     ["16", "16 Pro", "16 Pro Max"],
-    ["17", "17 Pro", "17 Pro Max"],
 ]
 
+# Список программ
+PROGRAM_ROWS = [
+    ["AyuGram", "OnionGram", "DarkGram"],
+    ["TikTok BH", "DoxGram", "Minecraft"],
+    ["Прочий мод"]
+]
 
-def gen_demo_email():
-    # Генерируем демонстрационный email (без реального домена)
-    local = ''.join(random.choices(string.ascii_lowercase + string.digits, k=12))
-    return f"{local}@example.com"
+# В памяти - хранение выданных "учёток"
+SESSIONS = {}
 
-
-def gen_demo_password():
-    return ''.join(random.choices(string.ascii_letters + string.digits + "_-@", k=10))
+# Хранение выбранных устройств пользователями
+USER_SELECTIONS = {}
 
 
 def make_models_keyboard():
     keyboard = []
     for row in MODEL_ROWS:
         keyboard.append([InlineKeyboardButton(text=m, callback_data=f"model|{m}") for m in row])
+    return InlineKeyboardMarkup(keyboard)
+
+
+def make_programs_keyboard():
+    keyboard = []
+    for row in PROGRAM_ROWS:
+        keyboard.append([InlineKeyboardButton(text=program, callback_data=f"program|{program}") for program in row])
     return InlineKeyboardMarkup(keyboard)
 
 
@@ -86,6 +130,32 @@ def make_subscription_keyboard():
         [InlineKeyboardButton("✅ Я подписался", callback_data="check_subscription")]
     ]
     return InlineKeyboardMarkup(keyboard)
+
+
+def get_available_account(program_name):
+    """Получает доступный аккаунт для программы"""
+    if program_name not in ACCOUNTS_DATABASE:
+        return None
+    
+    available_accounts = [acc for acc in ACCOUNTS_DATABASE[program_name] if acc["available"]]
+    if not available_accounts:
+        return None
+    
+    # Берем первый доступный аккаунт
+    account = available_accounts[0]
+    account["available"] = False
+    return account
+
+
+def release_account(program_name, email):
+    """Освобождает аккаунт"""
+    if program_name not in ACCOUNTS_DATABASE:
+        return
+    
+    for account in ACCOUNTS_DATABASE[program_name]:
+        if account["email"] == email:
+            account["available"] = True
+            break
 
 
 async def check_subscription(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
@@ -198,15 +268,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def model_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатываем выбор модели — выдаём тестовые (демо) креды с 10-мин таймером."""
+    """Обрабатываем выбор модели и переходим к выбору программы"""
     query = update.callback_query
     await query.answer()
     
-    # Проверяем подписку перед выдачей данных
+    # Проверяем подписку
     user_id = query.from_user.id
     if not await check_subscription(user_id, context):
         await query.edit_message_text(
-            "❌ *Для получения данных необходимо подписаться на канал! В случае ошибки отпишите модератору @kattyshechk*\n\n"
+            "❌ *Для использования бота необходимо подписаться на канал!*\n\n"
             f"Канал: {CHANNEL_USERNAME}",
             reply_markup=make_subscription_keyboard(),
             parse_mode='Markdown'
@@ -215,45 +285,95 @@ async def model_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     data = query.data  # "model|13"
     _, model = data.split("|", 1)
-    chat_id = query.message.chat_id
+    
+    # Сохраняем выбор модели пользователя
+    USER_SELECTIONS[user_id] = {"model": model}
+    
+    # Показываем выбор программы
+    await query.edit_message_caption(
+        caption=f"📱 Выбрана модель: *{model}*\n\n🎮 Теперь выберите программу:",
+        reply_markup=make_programs_keyboard(),
+        parse_mode='Markdown'
+    )
 
-    # создаём демонстрационные данные
-    email = gen_demo_email()
-    password = gen_demo_password()
+
+async def program_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатываем выбор программы и выдаем аккаунт"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    
+    # Проверяем подписку
+    if not await check_subscription(user_id, context):
+        await query.edit_message_text(
+            "❌ *Для получения данных необходимо подписаться на канал!*\n\n"
+            f"Канал: {CHANNEL_USERNAME}",
+            reply_markup=make_subscription_keyboard(),
+            parse_mode='Markdown'
+        )
+        return
+    
+    data = query.data  # "program|AyuGram"
+    _, program = data.split("|", 1)
+    
+    # Получаем выбранную ранее модель
+    user_selection = USER_SELECTIONS.get(user_id, {})
+    model = user_selection.get("model", "Неизвестно")
+    
+    # Получаем доступный аккаунт
+    account = get_available_account(program)
+    
+    if not account:
+        await query.edit_message_caption(
+            caption=f"❌ *Извините!*\n\nДля программы *{program}* временно нет доступных аккаунтов.\n\nПопробуйте позже или выберите другую программу.",
+            reply_markup=make_programs_keyboard(),
+            parse_mode='Markdown'
+        )
+        return
+    
+    # Устанавливаем время истечения
     expires_at = datetime.utcnow() + timedelta(minutes=10)
-
-    # отправляем сообщение с данными
+    
+    # Отправляем сообщение с данными аккаунта
     text = (
-        "🔐 Данные для входа (демо):\n"
-        f"📧 Email: `{email}`\n"
-        f"🔑 Пароль: `{password}`\n\n"
-        f"⏰ У вас есть 10 минут на установку (до {expires_at.isoformat()} UTC).\n"
-        "Если вы не используете эти данные, они автоматически станут неактивными. В случае ошибки отпишите модератору @kattyshechk"
+        f"🎯 *Данные для входа*\n\n"
+        f"📱 Модель: {model}\n"
+        f"🛠️ Программа: {program}\n\n"
+        f"📧 Email: `{account['email']}`\n"
+        f"🔑 Пароль: `{account['password']}`\n\n"
+        f"⏰ У вас есть 10 минут на установку (до {expires_at.strftime('%H:%M:%S')} UTC).\n"
+        "Если вы не используете эти данные, они автоматически станут неактивными."
     )
 
     sent = await context.bot.send_message(
-        chat_id=chat_id,
+        chat_id=query.message.chat_id,
         text=text,
         parse_mode="Markdown",
-        reply_markup=None,
     )
 
-    # Сохраняем сессию, индексируем по message_id (можно по любому уникальному id)
+    # Сохраняем сессию
     message_id = sent.message_id
     SESSIONS[message_id] = {
-        "email": email,
-        "password": password,
+        "email": account['email'],
+        "password": account['password'],
+        "program": program,
+        "model": model,
         "expires_at": expires_at,
         "revoked": False,
-        "chat_id": chat_id,
-        "model": model,
+        "chat_id": query.message.chat_id,
+        "user_id": user_id,
         "message_id": message_id,
     }
 
-    # Отправляем кнопки для отзыва / таймера под тем же сообщением (редактируем reply_markup)
-    await context.bot.edit_message_reply_markup(chat_id=chat_id, message_id=message_id, reply_markup=make_session_buttons(message_id))
+    # Добавляем кнопки управления
+    await context.bot.edit_message_reply_markup(
+        chat_id=query.message.chat_id, 
+        message_id=message_id, 
+        reply_markup=make_session_buttons(message_id)
+    )
 
-    # Создаём фон. задачу, которая через 10 минут пометит сессию как истёкшую и отредактирует сообщение
+    # Запускаем таймер
     asyncio.create_task(session_countdown(context, message_id))
 
 
@@ -262,29 +382,36 @@ async def session_countdown(context: ContextTypes.DEFAULT_TYPE, message_id: int)
     session = SESSIONS.get(message_id)
     if not session:
         return
+    
     now = datetime.utcnow()
     until = (session["expires_at"] - now).total_seconds()
     if until > 0:
         await asyncio.sleep(until)
 
-    # после сна проверим состояние
+    # После сна проверяем состояние
     session = SESSIONS.get(message_id)
     if not session:
         return
+    
     if not session["revoked"]:
         session["revoked"] = True
+        # Освобождаем аккаунт
+        release_account(session["program"], session["email"])
+        
         chat_id = session["chat_id"]
         try:
-            edit_text = (
-                "🔒 Сессия истекла — эти демонстрационные данные больше не действительны. Отпишите модератору @kattyshechk"
+            edit_text = "🔒 Сессия истекла — эти данные больше не действительны."
+            await context.bot.edit_message_text(
+                chat_id=chat_id, 
+                message_id=message_id, 
+                text=edit_text
             )
-            await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=edit_text)
         except Exception:
             logger.exception("Не удалось отредактировать сообщение при окончании таймера.")
 
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка inline кнопок revoke|..., timer|... и model|..."""
+    """Обработка inline кнопок"""
     query = update.callback_query
     await query.answer()
     data = query.data
@@ -294,51 +421,58 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await subscription_callback(update, context)
         return
 
+    # Обработка выбора модели
     if data.startswith("model|"):
-        # перенаправляем в handler выбора модели
         await model_selected(update, context)
         return
 
-    action, mid = data.split("|", 1)
-    try:
-        message_id = int(mid)
-    except ValueError:
-        await query.edit_message_text("Ошибка: неверный идентификатор сессии.")
+    # Обработка выбора программы
+    if data.startswith("program|"):
+        await program_selected(update, context)
         return
 
-    session = SESSIONS.get(message_id)
-    if not session:
-        await query.edit_message_text("Сессии не найдено или она уже удалена.")
-        return
-
-    if action == "revoke":
-        if session["revoked"]:
-            await query.edit_message_text("⚠️ Сессия уже была отозвана или истекла.")
-            return
-        session["revoked"] = True
+    # Обработка управления сессией
+    if data.startswith("revoke|") or data.startswith("timer|"):
+        action, mid = data.split("|", 1)
         try:
-            await context.bot.edit_message_text(
-                chat_id=session["chat_id"],
-                message_id=message_id,
-                text="❌ Аккаунт отозван. Данные больше не действительны."
-            )
-        except Exception:
-            logger.exception("Не удалось отредактировать сообщение при отзыве.")
-    elif action == "timer":
-        # показываем оставшееся время (не изменяем состояния)
-        if session["revoked"]:
-            await query.edit_message_text("Сессия уже отозвана/истекла.")
+            message_id = int(mid)
+        except ValueError:
+            await query.edit_message_text("Ошибка: неверный идентификатор сессии.")
             return
-        remaining = session["expires_at"] - datetime.utcnow()
-        secs = int(remaining.total_seconds())
-        if secs <= 0:
-            await query.edit_message_text("⏰ Время вышло — сессия истекла.")
+
+        session = SESSIONS.get(message_id)
+        if not session:
+            await query.edit_message_text("Сессии не найдено или она уже удалена.")
+            return
+
+        if action == "revoke":
+            if session["revoked"]:
+                await query.edit_message_text("⚠️ Сессия уже была отозвана или истекла.")
+                return
             session["revoked"] = True
-            return
-        mins, sec = divmod(secs, 60)
-        await query.edit_message_text(f"⏱️ Осталось времени: {mins} мин {sec} сек.")
-    else:
-        await query.edit_message_text("Неизвестная команда.")
+            # Освобождаем аккаунт
+            release_account(session["program"], session["email"])
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=session["chat_id"],
+                    message_id=message_id,
+                    text="❌ Аккаунт отозван. Данные больше не действительны."
+                )
+            except Exception:
+                logger.exception("Не удалось отредактировать сообщение при отзыве.")
+        elif action == "timer":
+            if session["revoked"]:
+                await query.edit_message_text("Сессия уже отозвана/истекла.")
+                return
+            remaining = session["expires_at"] - datetime.utcnow()
+            secs = int(remaining.total_seconds())
+            if secs <= 0:
+                await query.edit_message_text("⏰ Время вышло — сессия истекла.")
+                session["revoked"] = True
+                release_account(session["program"], session["email"])
+                return
+            mins, sec = divmod(secs, 60)
+            await query.edit_message_text(f"⏱️ Осталось времени: {mins} мин {sec} сек.")
 
 
 def main():
@@ -347,7 +481,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button_handler))
 
-    print("Запускаем бота...")
+    print("Запускаем бота с базой данных аккаунтов...")
     app.run_polling()
 
 
