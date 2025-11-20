@@ -31,12 +31,15 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "8512545163:AAFs8-3E4-1KA8yjQ8j_jVx-DwMv
 # Настройки канала (ЗАМЕНИ НА СВОЙ КАНАЛ)
 CHANNEL_USERNAME = "@pocoyoipa"  # Замени на username своего канала
 
-# Путь к картинкам
-IMAGE_PATHS = [
-    "IMG_6482.png",
-    "IMG_6483.png",
-    "IMG_6489.png",
-]
+# Модератор для помощи
+MODERATOR_USERNAME = "@kattyshechk"
+
+# Путь к картинкам для каждого этапа
+IMAGE_PATHS = {
+    "stage1": "stage1_welcome.png",  # Этап 1: Приветствие и выбор модели
+    "stage2": "stage2_programs.png",  # Этап 2: Выбор программы
+    "stage3": "stage3_credentials.png",  # Этап 3: Выдача данных
+}
 
 # База данных аккаунтов
 ACCOUNTS_DATABASE = {
@@ -98,11 +101,15 @@ SESSIONS = {}
 # Хранение выбранных устройств пользователями
 USER_SELECTIONS = {}
 
+# Хранение message_id для очистки
+USER_MESSAGES = {}
+
 
 def make_models_keyboard():
     keyboard = []
     for row in MODEL_ROWS:
         keyboard.append([InlineKeyboardButton(text=m, callback_data=f"model|{m}") for m in row])
+    keyboard.append([InlineKeyboardButton("🆘 Помощь", url=f"https://t.me/{MODERATOR_USERNAME[1:]}")])
     return InlineKeyboardMarkup(keyboard)
 
 
@@ -110,6 +117,7 @@ def make_programs_keyboard():
     keyboard = []
     for row in PROGRAM_ROWS:
         keyboard.append([InlineKeyboardButton(text=program, callback_data=f"program|{program}") for program in row])
+    keyboard.append([InlineKeyboardButton("🆘 Помощь", url=f"https://t.me/{MODERATOR_USERNAME[1:]}")])
     return InlineKeyboardMarkup(keyboard)
 
 
@@ -118,7 +126,8 @@ def make_session_buttons(message_id):
         [
             InlineKeyboardButton("❌ Отозвать аккаунт", callback_data=f"revoke|{message_id}"),
             InlineKeyboardButton("⏱️ Таймер", callback_data=f"timer|{message_id}"),
-        ]
+        ],
+        [InlineKeyboardButton("🆘 Помощь", url=f"https://t.me/{MODERATOR_USERNAME[1:]}")]
     ]
     return InlineKeyboardMarkup(kb)
 
@@ -127,9 +136,28 @@ def make_subscription_keyboard():
     """Клавиатура для подписки на канал"""
     keyboard = [
         [InlineKeyboardButton("📢 Подписаться на канал", url=f"https://t.me/{CHANNEL_USERNAME[1:]}")],
-        [InlineKeyboardButton("✅ Я подписался", callback_data="check_subscription")]
+        [InlineKeyboardButton("✅ Я подписался", callback_data="check_subscription")],
+        [InlineKeyboardButton("🆘 Помощь", url=f"https://t.me/{MODERATOR_USERNAME[1:]}")]
     ]
     return InlineKeyboardMarkup(keyboard)
+
+
+async def cleanup_user_messages(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
+    """Очищает предыдущие сообщения бота для пользователя"""
+    if chat_id in USER_MESSAGES:
+        for msg_id in USER_MESSAGES[chat_id]:
+            try:
+                await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
+            except Exception as e:
+                logger.debug(f"Не удалось удалить сообщение {msg_id}: {e}")
+        USER_MESSAGES[chat_id] = []
+
+
+async def add_user_message(chat_id: int, message_id: int):
+    """Добавляет message_id в список сообщений пользователя"""
+    if chat_id not in USER_MESSAGES:
+        USER_MESSAGES[chat_id] = []
+    USER_MESSAGES[chat_id].append(message_id)
 
 
 def get_available_account(program_name):
@@ -181,17 +209,22 @@ async def require_subscription(update: Update, context: ContextTypes.DEFAULT_TYP
     """
     Показывает сообщение с требованием подписки
     """
+    chat_id = update.effective_chat.id
+    await cleanup_user_messages(chat_id, context)
+    
     message_text = (
         "📢 *Для использования бота необходимо подписаться на наш канал!*\n\n"
         f"Канал: {CHANNEL_USERNAME}\n\n"
-        "После подписки нажми кнопку '✅ Я подписался'"
+        "После подписки нажми кнопку '✅ Я подписался'\n\n"
+        f"*Если у вас возникли вопросы или ошибка, свяжитесь с {MODERATOR_USERNAME}*"
     )
     
-    await update.message.reply_text(
+    sent = await update.message.reply_text(
         message_text,
         reply_markup=make_subscription_keyboard(),
         parse_mode='Markdown'
     )
+    await add_user_message(chat_id, sent.message_id)
 
 
 async def subscription_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -202,27 +235,38 @@ async def subscription_callback(update: Update, context: ContextTypes.DEFAULT_TY
     await query.answer()
     
     user_id = query.from_user.id
+    chat_id = query.message.chat_id
     
     if await check_subscription(user_id, context):
         # Если подписан - показываем основное меню
-        chat_id = query.message.chat_id
-        caption = "📱 Выберите модель вашего iPhone:\n(На модель ниже 13 установить нельзя — в демо показано)"
+        await cleanup_user_messages(chat_id, context)
+        
+        caption = (
+            "🎯 *ЭТАП 1: ВЫБОР МОДЕЛИ УСТРОЙСТВА*\n\n"
+            "📱 Выберите модель вашего iPhone:\n"
+            "(На модель ниже 13 установить нельзя — в демо показано)\n\n"
+            f"*Если у вас возникли вопросы или ошибка, свяжитесь с {MODERATOR_USERNAME}*"
+        )
         
         try:
-            with open(IMAGE_PATHS[0], "rb") as f:
-                await context.bot.send_photo(
+            with open(IMAGE_PATHS["stage1"], "rb") as f:
+                sent = await context.bot.send_photo(
                     chat_id=chat_id, 
                     photo=f, 
                     caption=caption, 
-                    reply_markup=make_models_keyboard()
+                    reply_markup=make_models_keyboard(),
+                    parse_mode='Markdown'
                 )
+                await add_user_message(chat_id, sent.message_id)
         except Exception as e:
             logger.exception("Не удалось отправить картинку: %s", e)
-            await context.bot.send_message(
+            sent = await context.bot.send_message(
                 chat_id=chat_id, 
                 text=caption, 
-                reply_markup=make_models_keyboard()
+                reply_markup=make_models_keyboard(),
+                parse_mode='Markdown'
             )
+            await add_user_message(chat_id, sent.message_id)
         
         # Удаляем сообщение с требованием подписки
         await query.message.delete()
@@ -231,7 +275,8 @@ async def subscription_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await query.edit_message_text(
             "❌ *Ты еще не подписан на канал!*\n\n"
             f"Канал: {CHANNEL_USERNAME}\n\n"
-            "Подпишись и нажми кнопку '✅ Я подписался'",
+            "Подпишись и нажми кнопку '✅ Я подписался'\n\n"
+            f"*Если у вас возникли вопросы или ошибка, свяжитесь с {MODERATOR_USERNAME}*",
             reply_markup=make_subscription_keyboard(),
             parse_mode='Markdown'
         )
@@ -240,6 +285,10 @@ async def subscription_callback(update: Update, context: ContextTypes.DEFAULT_TY
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """При /start проверяем подписку и показываем изображение с клавиатурой выбора модели."""
     user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    
+    # Очищаем предыдущие сообщения
+    await cleanup_user_messages(chat_id, context)
     
     # Проверяем подписку на канал
     if not await check_subscription(user_id, context):
@@ -247,24 +296,32 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     # Если подписан - показываем основное меню
-    chat_id = update.effective_chat.id
-    caption = "📱 Выберите модель вашего iPhone:\n(На модель ниже 13 установить нельзя — в демо показано)"
+    caption = (
+        "🎯 *ЭТАП 1: ВЫБОР МОДЕЛИ УСТРОЙСТВА*\n\n"
+        "📱 Выберите модель вашего iPhone:\n"
+        "(На модель ниже 13 установить нельзя — в демо показано)\n\n"
+        f"*Если у вас возникли вопросы или ошибка, свяжитесь с {MODERATOR_USERNAME}*"
+    )
     
     try:
-        with open(IMAGE_PATHS[0], "rb") as f:
-            await context.bot.send_photo(
+        with open(IMAGE_PATHS["stage1"], "rb") as f:
+            sent = await context.bot.send_photo(
                 chat_id=chat_id, 
                 photo=f, 
                 caption=caption, 
-                reply_markup=make_models_keyboard()
+                reply_markup=make_models_keyboard(),
+                parse_mode='Markdown'
             )
+            await add_user_message(chat_id, sent.message_id)
     except Exception as e:
         logger.exception("Не удалось отправить картинку: %s", e)
-        await context.bot.send_message(
+        sent = await context.bot.send_message(
             chat_id=chat_id, 
             text=caption, 
-            reply_markup=make_models_keyboard()
+            reply_markup=make_models_keyboard(),
+            parse_mode='Markdown'
         )
+        await add_user_message(chat_id, sent.message_id)
 
 
 async def model_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -274,13 +331,19 @@ async def model_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Проверяем подписку
     user_id = query.from_user.id
+    chat_id = query.message.chat_id
+    
     if not await check_subscription(user_id, context):
-        await query.edit_message_text(
-            "❌ *Для использования бота необходимо подписаться на канал!*\n\n"
-            f"Канал: {CHANNEL_USERNAME}",
+        await cleanup_user_messages(chat_id, context)
+        sent = await context.bot.send_message(
+            chat_id=chat_id,
+            text="❌ *Для использования бота необходимо подписаться на канал!*\n\n"
+                 f"Канал: {CHANNEL_USERNAME}\n\n"
+                 f"*Если у вас возникли вопросы или ошибка, свяжитесь с {MODERATOR_USERNAME}*",
             reply_markup=make_subscription_keyboard(),
             parse_mode='Markdown'
         )
+        await add_user_message(chat_id, sent.message_id)
         return
     
     data = query.data  # "model|13"
@@ -289,12 +352,36 @@ async def model_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Сохраняем выбор модели пользователя
     USER_SELECTIONS[user_id] = {"model": model}
     
+    # Очищаем предыдущие сообщения
+    await cleanup_user_messages(chat_id, context)
+    
     # Показываем выбор программы
-    await query.edit_message_caption(
-        caption=f"📱 Выбрана модель: *{model}*\n\n🎮 Теперь выберите программу:",
-        reply_markup=make_programs_keyboard(),
-        parse_mode='Markdown'
+    caption = (
+        f"🎯 *ЭТАП 2: ВЫБОР ПРОГРАММЫ*\n\n"
+        f"📱 Выбрана модель: *{model}*\n\n"
+        f"🎮 Теперь выберите программу:\n\n"
+        f"*Если у вас возникли вопросы или ошибка, свяжитесь с {MODERATOR_USERNAME}*"
     )
+    
+    try:
+        with open(IMAGE_PATHS["stage2"], "rb") as f:
+            sent = await context.bot.send_photo(
+                chat_id=chat_id,
+                photo=f,
+                caption=caption,
+                reply_markup=make_programs_keyboard(),
+                parse_mode='Markdown'
+            )
+            await add_user_message(chat_id, sent.message_id)
+    except Exception as e:
+        logger.exception("Не удалось отправить картинку: %s", e)
+        sent = await context.bot.send_message(
+            chat_id=chat_id,
+            text=caption,
+            reply_markup=make_programs_keyboard(),
+            parse_mode='Markdown'
+        )
+        await add_user_message(chat_id, sent.message_id)
 
 
 async def program_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -303,15 +390,20 @@ async def program_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     
     user_id = query.from_user.id
+    chat_id = query.message.chat_id
     
     # Проверяем подписку
     if not await check_subscription(user_id, context):
-        await query.edit_message_text(
-            "❌ *Для получения данных необходимо подписаться на канал!*\n\n"
-            f"Канал: {CHANNEL_USERNAME}",
+        await cleanup_user_messages(chat_id, context)
+        sent = await context.bot.send_message(
+            chat_id=chat_id,
+            text="❌ *Для получения данных необходимо подписаться на канал!*\n\n"
+                 f"Канал: {CHANNEL_USERNAME}\n\n"
+                 f"*Если у вас возникли вопросы или ошибка, свяжитесь с {MODERATOR_USERNAME}*",
             reply_markup=make_subscription_keyboard(),
             parse_mode='Markdown'
         )
+        await add_user_message(chat_id, sent.message_id)
         return
     
     data = query.data  # "program|AyuGram"
@@ -325,32 +417,70 @@ async def program_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     account = get_available_account(program)
     
     if not account:
-        await query.edit_message_caption(
-            caption=f"❌ *Извините!*\n\nДля программы *{program}* временно нет доступных аккаунтов.\n\nПопробуйте позже или выберите другую программу.",
-            reply_markup=make_programs_keyboard(),
-            parse_mode='Markdown'
+        await cleanup_user_messages(chat_id, context)
+        caption = (
+            f"❌ *Извините!*\n\n"
+            f"Для программы *{program}* временно нет доступных аккаунтов.\n\n"
+            f"Попробуйте позже или выберите другую программу.\n\n"
+            f"*Если у вас возникли вопросы или ошибка, свяжитесь с {MODERATOR_USERNAME}*"
         )
+        
+        try:
+            with open(IMAGE_PATHS["stage2"], "rb") as f:
+                sent = await context.bot.send_photo(
+                    chat_id=chat_id,
+                    photo=f,
+                    caption=caption,
+                    reply_markup=make_programs_keyboard(),
+                    parse_mode='Markdown'
+                )
+                await add_user_message(chat_id, sent.message_id)
+        except Exception as e:
+            logger.exception("Не удалось отправить картинку: %s", e)
+            sent = await context.bot.send_message(
+                chat_id=chat_id,
+                text=caption,
+                reply_markup=make_programs_keyboard(),
+                parse_mode='Markdown'
+            )
+            await add_user_message(chat_id, sent.message_id)
         return
     
     # Устанавливаем время истечения
     expires_at = datetime.utcnow() + timedelta(minutes=10)
     
+    # Очищаем предыдущие сообщения
+    await cleanup_user_messages(chat_id, context)
+    
     # Отправляем сообщение с данными аккаунта
     text = (
-        f"🎯 *Данные для входа*\n\n"
+        f"🎯 *ЭТАП 3: ДАННЫЕ ДЛЯ ВХОДА*\n\n"
         f"📱 Модель: {model}\n"
         f"🛠️ Программа: {program}\n\n"
         f"📧 Email: `{account['email']}`\n"
         f"🔑 Пароль: `{account['password']}`\n\n"
         f"⏰ У вас есть 10 минут на установку (до {expires_at.strftime('%H:%M:%S')} UTC).\n"
-        "Если вы не используете эти данные, они автоматически станут неактивными."
+        f"Если вы не используете эти данные, они автоматически станут неактивными.\n\n"
+        f"*Если у вас возникли вопросы или ошибка, свяжитесь с {MODERATOR_USERNAME}*"
     )
 
-    sent = await context.bot.send_message(
-        chat_id=query.message.chat_id,
-        text=text,
-        parse_mode="Markdown",
-    )
+    try:
+        with open(IMAGE_PATHS["stage3"], "rb") as f:
+            sent = await context.bot.send_photo(
+                chat_id=chat_id,
+                photo=f,
+                caption=text,
+                parse_mode="Markdown",
+                reply_markup=make_session_buttons(0)  # Временно, потом обновим
+            )
+    except Exception as e:
+        logger.exception("Не удалось отправить картинку: %s", e)
+        sent = await context.bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            parse_mode="Markdown",
+            reply_markup=make_session_buttons(0)  # Временно, потом обновим
+        )
 
     # Сохраняем сессию
     message_id = sent.message_id
@@ -361,17 +491,21 @@ async def program_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "model": model,
         "expires_at": expires_at,
         "revoked": False,
-        "chat_id": query.message.chat_id,
+        "chat_id": chat_id,
         "user_id": user_id,
         "message_id": message_id,
     }
 
-    # Добавляем кнопки управления
-    await context.bot.edit_message_reply_markup(
-        chat_id=query.message.chat_id, 
-        message_id=message_id, 
-        reply_markup=make_session_buttons(message_id)
+    # Обновляем кнопки с правильным message_id
+    await context.bot.edit_message_caption(
+        chat_id=chat_id,
+        message_id=message_id,
+        caption=text,
+        reply_markup=make_session_buttons(message_id),
+        parse_mode="Markdown"
     )
+
+    await add_user_message(chat_id, message_id)
 
     # Запускаем таймер
     asyncio.create_task(session_countdown(context, message_id))
@@ -400,11 +534,15 @@ async def session_countdown(context: ContextTypes.DEFAULT_TYPE, message_id: int)
         
         chat_id = session["chat_id"]
         try:
-            edit_text = "🔒 Сессия истекла — эти данные больше не действительны."
-            await context.bot.edit_message_text(
+            edit_text = (
+                "🔒 *Сессия истекла* — эти данные больше не действительны.\n\n"
+                f"*Если у вас возникли вопросы или ошибка, свяжитесь с {MODERATOR_USERNAME}*"
+            )
+            await context.bot.edit_message_caption(
                 chat_id=chat_id, 
                 message_id=message_id, 
-                text=edit_text
+                caption=edit_text,
+                parse_mode='Markdown'
             )
         except Exception:
             logger.exception("Не удалось отредактировать сообщение при окончании таймера.")
@@ -447,32 +585,38 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if action == "revoke":
             if session["revoked"]:
-                await query.edit_message_text("⚠️ Сессия уже была отозвана или истекла.")
+                await query.answer("⚠️ Сессия уже была отозвана или истекла.", show_alert=True)
                 return
             session["revoked"] = True
             # Освобождаем аккаунт
             release_account(session["program"], session["email"])
             try:
-                await context.bot.edit_message_text(
+                edit_text = (
+                    "❌ *Аккаунт отозван* — данные больше не действительны.\n\n"
+                    f"*Если у вас возникли вопросы или ошибка, свяжитесь с {MODERATOR_USERNAME}*"
+                )
+                await context.bot.edit_message_caption(
                     chat_id=session["chat_id"],
                     message_id=message_id,
-                    text="❌ Аккаунт отозван. Данные больше не действительны."
+                    caption=edit_text,
+                    parse_mode='Markdown'
                 )
             except Exception:
                 logger.exception("Не удалось отредактировать сообщение при отзыве.")
         elif action == "timer":
             if session["revoked"]:
-                await query.edit_message_text("Сессия уже отозвана/истекла.")
+                await query.answer("Сессия уже отозвана/истекла.", show_alert=True)
                 return
             remaining = session["expires_at"] - datetime.utcnow()
             secs = int(remaining.total_seconds())
             if secs <= 0:
-                await query.edit_message_text("⏰ Время вышло — сессия истекла.")
+                await query.answer("⏰ Время вышло — сессия истекла.", show_alert=True)
                 session["revoked"] = True
                 release_account(session["program"], session["email"])
                 return
             mins, sec = divmod(secs, 60)
-            await query.edit_message_text(f"⏱️ Осталось времени: {mins} мин {sec} сек.")
+            # Показываем alert с временем (сообщение не редактируется)
+            await query.answer(f"⏱️ Осталось времени: {mins} мин {sec} сек.", show_alert=True)
 
 
 def main():
@@ -481,7 +625,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button_handler))
 
-    print("Запускаем бота с базой данных аккаунтов...")
+    print("Запускаем бота с улучшенной системой сообщений...")
     app.run_polling()
 
 
